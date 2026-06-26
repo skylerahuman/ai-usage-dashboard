@@ -5,6 +5,7 @@
 use ai_usage_dashboard::model::{
     Aggregated, Provider, ProviderStatus, ProviderUsage, UsageWindow, WindowKey,
 };
+use ai_usage_dashboard::tokens::TokenSummary;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
@@ -58,6 +59,35 @@ fn renders_with_partial_failure() {
     let backend = TestBackend::new(120, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
-        .draw(|f| ai_usage_dashboard::ui::render(f, &state))
+        .draw(|f| ai_usage_dashboard::ui::render(f, &state, None))
         .expect("render should not panic");
+}
+
+#[test]
+fn renders_with_token_panel() {
+    use ai_usage_dashboard::tokens::TokenRow;
+    let summary = TokenSummary {
+        window: ai_usage_dashboard::tokens::TokenWindow::All,
+        rows: vec![TokenRow {
+            model: "MiniMax-M3".into(),
+            provider: Provider::Minimax,
+            msgs: 158,
+            input: 157_630,
+            output: 91_842,
+            cache_read: 19_550_942,
+            total: 19_800_414,
+            cost: 2.66,
+        }],
+    };
+    let state = Aggregated {
+        providers: vec![],
+        last_refresh: None,
+        next_refresh: None,
+        auth_source: Some("/home/sky/.pi/agent/auth.json".into()),
+    };
+    let backend = TestBackend::new(140, 28);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| ai_usage_dashboard::ui::render(f, &state, Some(&summary)))
+        .expect("render should not panic with tokens panel");
 }

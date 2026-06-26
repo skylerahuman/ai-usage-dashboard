@@ -1,4 +1,4 @@
-use ai_usage_dashboard::{aggregate, config, model, ui};
+use ai_usage_dashboard::{aggregate, config, model, tokens::TokenWindow, ui};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
@@ -12,13 +12,15 @@ use std::time::Duration;
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let oneshot = args.iter().any(|a| a == "--once" || a == "--json");
+    let token_window = parse_token_window(&args);
 
     let creds = config::load(None)?;
     let client = build_client()?;
 
     if oneshot {
         let state = aggregate::refresh(&creds, &client).await;
-        print_once(&state);
+        let summary = ai_usage_dashboard::tokens::TokenSummary::collect(token_window);
+        print_once(&state, &summary);
         return Ok(());
     }
 
@@ -28,7 +30,7 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let res = run_app(&mut terminal, creds, client).await;
+    let res = run_app(&mut terminal, creds, client, token_window).await;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -40,16 +42,36 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn parse_token_window(args: &[String]) -> TokenWindow {
+    let mut idx = 0;
+    while idx < args.len() {
+        if args[idx] == "--since" {
+            if let Some(v) = args.get(idx + 1) {
+                return match v.as_str() {
+                    "24h" | "1d" => TokenWindow::Last24h,
+                    "7d" | "1w" => TokenWindow::Last7d,
+                    "all" | "0" => TokenWindow::All,
+                    _ => TokenWindow::All,
+                };
+            }
+        }
+        idx += 1;
+    }
+    TokenWindow::All
+}
+
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     creds: config::Credentials,
     client: reqwest::Client,
+    token_window: TokenWindow,
 ) -> Result<()> {
     let mut state = aggregate::refresh(&creds, &client).await;
+    let mut summary = ai_usage_dashboard::tokens::TokenSummary::collect(token_window);
     let mut tick = tokio::time::interval(Duration::from_millis(250));
 
     loop {
-        terminal.draw(|f| ui::render(f, &state))?;
+        terminal.draw(|f| ui::render(f, &state, Some(&summary)))?;
 
         tokio::select! {
             _ = tick.tick() => {
@@ -66,6 +88,7 @@ async fn run_app(
                 }
                 if state.next_refresh.map(|i| i <= std::time::Instant::now()).unwrap_or(false) {
                     state = aggregate::refresh(&creds, &client).await;
+                    summary = ai_usage_dashboard::tokens::TokenSummary::collect(token_window);
                 }
             }
             _ = tokio::signal::ctrl_c() => break,
@@ -110,8 +133,18 @@ fn build_client() -> Result<reqwest::Client> {
     Ok(builder.build().context("build reqwest client")?)
 }
 
-fn print_once(state: &model::Aggregated) {
+fn print_once(state: &model::Aggregated, summary: &ai_usage_dashboard::tokens::TokenSummary) {
     println!("ai-usage-dashboard");
+    if !summary.rows.is_empty() {
+        println!();
+        println!("tokens ({})", summary.window.label());
+        println!("{:<22} {:>6} {:>14} {:>14} {:>14} {:>14} {:>10}", "model", "msgs", "input", "output", "cached", "total", "cost");
+        for r in &summary.rows {
+            println!("{:<22} {:>6} {:>14} {:>14} {:>14} {:>14} {:>10}",
+                truncate(&r.model, 22), r.msgs, r.input, r.output, r.cache_read, r.total, format!("${:.4}", r.cost));
+        }
+    }
+    println!();
     for p in state.sorted_by_usage() {
         println!("{} [{}]", p.label, p.status.chip());
         if let model::ProviderStatus::Error { message } = &p.status {
@@ -120,8 +153,9 @@ fn print_once(state: &model::Aggregated) {
         for w in &p.windows {
             let pct = w.used_percent.map(|p| format!("{p:.1}%")).unwrap_or_else(|| "n/a".into());
             let counts = match (w.used_raw, w.total_raw) {
-                (Some(u), Some(t)) if t > 0 => format!(" {u}/{t}"),
-                (Some(u), _) => format!(" {u}"),
+                (Some(u), Some(t)) if t > 0 && u > 0 => format!(" {u}/{t}"),
+                (Some(_), Some(t)) if t > 0 => format!(" 0/{t}"),
+                (Some(u), _) if u > 0 => format!(" {u}"),
                 _ => String::new(),
             };
             println!("  {:<8} {:>8}{}", w.label, pct, counts);
@@ -130,4 +164,8 @@ fn print_once(state: &model::Aggregated) {
             println!("  note: {n}");
         }
     }
+}
+
+fn truncate(s: &str, n: usize) -> String {
+    if s.chars().count() <= n { s.to_string() } else { s.chars().take(n - 1).collect::<String>() + "…" }
 }

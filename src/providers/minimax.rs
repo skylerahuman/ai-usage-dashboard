@@ -137,10 +137,11 @@ pub async fn fetch(cred: &Credential, client: &reqwest::Client) -> anyhow::Resul
             pct_week_samples.push(100.0 - p);
         }
         if let Some(r) = m.remains_time {
-            max_5h_remains = Some(max_5h_remains.map_or(r, |cur| cur.max(r)));
+            // API returns milliseconds; convert to seconds.
+            max_5h_remains = Some(max_5h_remains.map_or(r / 1000, |cur| cur.max(r / 1000)));
         }
         if let Some(r) = m.weekly_remains_time {
-            max_week_remains = Some(max_week_remains.map_or(r, |cur| cur.max(r)));
+            max_week_remains = Some(max_week_remains.map_or(r / 1000, |cur| cur.max(r / 1000)));
         }
     }
 
