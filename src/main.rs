@@ -196,24 +196,19 @@ fn build_client() -> Result<reqwest::Client> {
 fn print_once(state: &model::Aggregated, summary: &ai_usage_dashboard::tokens::TokenSummary) {
     println!("ai-usage-dashboard");
     if !summary.rows.is_empty() {
-        let total_actual: f64 = summary.rows.iter().map(|r| r.cost).sum();
         let total_est: f64 = summary.rows.iter().filter_map(|r| r.est_cost).sum();
-        let savings = total_est - total_actual;
         println!();
         println!("tokens ({})", summary.window.label());
-        println!("{:<22} {:>6} {:>14} {:>14} {:>14} {:>14} {:>10} {:>10}",
-            "model", "msgs", "input", "output", "cached", "total", "actual", "est $");
+        println!("{:<22} {:>6} {:>14} {:>14} {:>14} {:>14} {:>14}",
+            "model", "msgs", "input", "output", "cached", "total", "cost");
         for r in &summary.rows {
-            let actual = format!("${:.2}", r.cost);
-            let est = r.est_cost.map(|c| format!("${:.2}", c)).unwrap_or_else(|| "-".into());
-            println!("{:<22} {:>6} {:>14} {:>14} {:>14} {:>14} {:>10} {:>10}",
-                truncate(&r.model, 22), r.msgs, r.input, r.output, r.cache_read, r.total, actual, est);
+            let cost = r.est_cost.map(|c| format!("${:.2}", c)).unwrap_or_else(|| "-".into());
+            println!("{:<22} {:>6} {:>14} {:>14} {:>14} {:>14} {:>14}",
+                truncate(&r.model, 22), r.msgs, r.input, r.output, r.cache_read, r.total, cost);
         }
-        println!("{:<22} {:>6} {:>14} {:>14} {:>14} {:>14} {:>10} {:>10}",
-            "TOTAL", "", "", "", "", "", format!("${:.2}", total_actual), format!("${:.2}", total_est));
-        if savings > 0.0 {
-            println!("estimated savings vs PAYG: ${:.2}", savings);
-        }
+        println!("{:<22} {:>6} {:>14} {:>14} {:>14} {:>14} {:>14}",
+            "TOTAL", "", "", "", "", "", format!("${:.2}", total_est));
+        println!("(estimated at public PAYG rates; provider-reported cost ignored since user is on flat-fee plans)");
     }
     println!();
     for p in state.sorted_by_usage() {
