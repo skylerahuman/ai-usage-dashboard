@@ -1,6 +1,6 @@
 use ai_usage_dashboard::{aggregate, config, model, tokens::TokenWindow, ui};
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
@@ -66,6 +66,27 @@ async fn run_app(
     client: reqwest::Client,
     token_window: TokenWindow,
 ) -> Result<()> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<crossterm::event::KeyEvent>(16);
+
+    // Dedicated blocking thread for input — `crossterm::event::read` blocks
+    // until a key arrives, which is the only reliable way to deliver keys
+    // on Linux terminals when mixing with tokio. The earlier code polled
+    // with a zero timeout inside a tokio select arm, which dropped keys
+    // on many setups (including the one this project was developed on).
+    std::thread::spawn(move || {
+        loop {
+            // `read()` returns immediately on Resize events; we only forward keys.
+            match event::read() {
+                Ok(Event::Key(k)) => {
+                    if tx.blocking_send(k).is_err() { break; }
+                }
+                Ok(Event::Resize(_, _)) => continue,
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+    });
+
     let mut state = aggregate::refresh(&creds, &client).await;
     let mut summary = ai_usage_dashboard::tokens::TokenSummary::collect(token_window);
     let mut tick = tokio::time::interval(Duration::from_millis(250));
@@ -74,18 +95,18 @@ async fn run_app(
         terminal.draw(|f| ui::render(f, &state, Some(&summary)))?;
 
         tokio::select! {
-            _ = tick.tick() => {
-                if event::poll(Duration::from_millis(0))? {
-                    if let Event::Key(key) = event::read()? {
-                        if key.kind == KeyEventKind::Press {
-                            match key.code {
-                                KeyCode::Char('q') | KeyCode::Esc => break,
-                                KeyCode::Char('r') => state = aggregate::refresh(&creds, &client).await,
-                                _ => {}
-                            }
-                        }
+            maybe_key = rx.recv() => {
+                let Some(key) = maybe_key else { break; };
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => break,
+                    KeyCode::Char('r') | KeyCode::Char('R') => {
+                        state = aggregate::refresh(&creds, &client).await;
+                        summary = ai_usage_dashboard::tokens::TokenSummary::collect(token_window);
                     }
+                    _ => {}
                 }
+            }
+            _ = tick.tick() => {
                 if state.next_refresh.map(|i| i <= std::time::Instant::now()).unwrap_or(false) {
                     state = aggregate::refresh(&creds, &client).await;
                     summary = ai_usage_dashboard::tokens::TokenSummary::collect(token_window);
@@ -153,7 +174,7 @@ fn print_once(state: &model::Aggregated, summary: &ai_usage_dashboard::tokens::T
         for w in &p.windows {
             let pct = w.used_percent.map(|p| format!("{p:.1}%")).unwrap_or_else(|| "n/a".into());
             let counts = match (w.used_raw, w.total_raw) {
-                (Some(u), Some(t)) if t > 0 && u > 0 => format!(" {u}/{t}"),
+                (Some(_u), Some(t)) if t > 0 && _u > 0 => format!(" {_u}/{t}"),
                 (Some(_), Some(t)) if t > 0 => format!(" 0/{t}"),
                 (Some(u), _) if u > 0 => format!(" {u}"),
                 _ => String::new(),

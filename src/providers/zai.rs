@@ -5,6 +5,7 @@
 //! Spec:     https://api.z.ai/api/monitor/usage/quota/limit (live; 1001 without auth)
 
 use crate::config::Credential;
+use crate::providers::friendly_http_error;
 use crate::model::{Provider, ProviderStatus, ProviderUsage, UsageWindow, WindowKey};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -68,13 +69,13 @@ pub async fn fetch(cred: &Credential, client: &reqwest::Client) -> Result<Provid
         .context("z.ai request")?;
     let status = resp.status();
     if !status.is_success() {
-        let txt = resp.text().await.unwrap_or_default();
+        let _ = resp.text().await;
         return Ok(ProviderUsage {
             provider: Provider::Zai,
             label: Provider::Zai.label().into(),
             fetched_at: Some(Instant::now()),
             status: ProviderStatus::Error {
-                message: format!("HTTP {} (body: {})", status.as_u16(), txt.chars().take(120).collect::<String>()),
+                message: friendly_http_error(status.as_u16()),
             },
             windows: vec![],
             notes: vec![],
@@ -88,12 +89,10 @@ pub async fn fetch(cred: &Credential, client: &reqwest::Client) -> Result<Provid
             label: Provider::Zai.label().into(),
             fetched_at: Some(Instant::now()),
             status: ProviderStatus::Error {
-                message: body
-                    .msg
-                    .unwrap_or_else(|| format!("z.ai returned code {}", body.code)),
+                message: body.msg.unwrap_or_else(|| friendly_http_error(status.as_u16())),
             },
             windows: vec![],
-            notes: vec![format!("HTTP {}", status)],
+            notes: vec![],
         });
     }
 

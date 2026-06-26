@@ -6,6 +6,7 @@
 //! Spec:     Reverse-engineered from `pi-vault/pi-usage` openai-codex provider.
 
 use crate::config::Credential;
+use crate::providers::friendly_http_error;
 use crate::model::{Provider, ProviderStatus, ProviderUsage, UsageWindow, WindowKey};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -74,12 +75,12 @@ pub async fn fetch(cred: &Credential, client: &reqwest::Client) -> anyhow::Resul
     let http_status = resp.status();
     let headers = resp.headers().clone();
     if !http_status.is_success() && !matches!(http_status.as_u16(), 401 | 403 | 429) {
-        let txt = resp.text().await.unwrap_or_default();
+        let _ = resp.text().await;
         return Ok(ProviderUsage {
             provider: Provider::Codex,
             label: Provider::Codex.label().into(),
             fetched_at: Some(Instant::now()),
-            status: ProviderStatus::Error { message: format!("HTTP {} (body: {})", http_status.as_u16(), txt.chars().take(120).collect::<String>()) },
+            status: ProviderStatus::Error { message: friendly_http_error(http_status.as_u16()) },
             windows: vec![],
             notes: vec![],
         });
@@ -99,9 +100,9 @@ pub async fn fetch(cred: &Credential, client: &reqwest::Client) -> anyhow::Resul
             provider: Provider::Codex,
             label: Provider::Codex.label().into(),
             fetched_at: Some(Instant::now()),
-            status: ProviderStatus::Error { message: "auth failed — re-login required".into() },
+            status: ProviderStatus::Error { message: friendly_http_error(http_status.as_u16()) },
             windows: vec![],
-            notes: vec![format!("HTTP {}", http_status)],
+            notes: vec![],
         });
     }
     if http_status.as_u16() == 429 {
@@ -109,7 +110,7 @@ pub async fn fetch(cred: &Credential, client: &reqwest::Client) -> anyhow::Resul
             .get("retry-after")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<i64>().ok())
-            .map(|s| format!("retry-after: {}s", s))
+            .map(|s| format!("rate limited (retry in {}s)", s))
             .unwrap_or_else(|| "rate limited".into());
         return Ok(ProviderUsage {
             provider: Provider::Codex,
@@ -117,7 +118,7 @@ pub async fn fetch(cred: &Credential, client: &reqwest::Client) -> anyhow::Resul
             fetched_at: Some(Instant::now()),
             status: ProviderStatus::Error { message: retry },
             windows: vec![],
-            notes: vec!["HTTP 429".into()],
+            notes: vec![],
         });
     }
     if !http_status.is_success() {

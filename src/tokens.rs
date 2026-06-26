@@ -103,11 +103,43 @@ pub struct TokenSummary {
 
 impl TokenSummary {
     pub fn collect(window: TokenWindow) -> Self {
-        let rows = match scan(window) {
+        let mut rows = match scan(window) {
             Ok(rows) => rows,
             Err(_) => Vec::new(),
         };
+        // Always show one placeholder row per provider, so the user can see
+        // "this is where z.ai / codex tokens will appear once I use them".
+        for (model, provider) in [
+            ("glm-*", Provider::Zai),
+            ("minimax-*", Provider::Minimax),
+            ("gpt-*", Provider::Codex),
+        ] {
+            if !rows.iter().any(|r| r.provider == provider) {
+                rows.push(TokenRow {
+                    model: model.into(),
+                    provider,
+                    msgs: 0,
+                    input: 0,
+                    output: 0,
+                    cache_read: 0,
+                    total: 0,
+                    cost: 0.0,
+                });
+            }
+        }
+        rows.sort_by(|a, b| {
+            // Healthy providers first (non-zero total), then placeholders.
+            b.total.cmp(&a.total).then_with(|| provider_order(a.provider).cmp(&provider_order(b.provider)))
+        });
         TokenSummary { window, rows }
+    }
+}
+
+fn provider_order(p: Provider) -> u8 {
+    match p {
+        Provider::Codex => 0,
+        Provider::Minimax => 1,
+        Provider::Zai => 2,
     }
 }
 

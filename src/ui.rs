@@ -93,14 +93,22 @@ fn render_tokens(frame: &mut Frame, area: Rect, summary: &TokenSummary) {
             Provider::Minimax => Color::Green,
             Provider::Codex => Color::Yellow,
         };
+        let is_placeholder = r.total == 0 && r.msgs == 0;
+        let style = if is_placeholder {
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+        } else {
+            Style::default().fg(provider_color)
+        };
+        let suffix = if is_placeholder { "  (no sessions yet)" } else { "" };
         lines.push(Line::from(vec![
-            Span::styled(format!("{:<20}", truncate(&r.model, 20)), Style::default().fg(provider_color)),
-            Span::raw(format!("{:>10}", r.msgs)),
-            Span::raw(format!("{:>14}", fmt_num(r.input))),
-            Span::raw(format!("{:>14}", fmt_num(r.output))),
-            Span::raw(format!("{:>14}", fmt_num(r.cache_read))),
-            Span::raw(format!("{:>14}", fmt_num(r.total))),
-            Span::raw(format!("{:>12}", format!("${:.4}", r.cost))),
+            Span::styled(format!("{:<20}", truncate(&r.model, 20)), style),
+            Span::styled(format!("{:>10}", r.msgs), style),
+            Span::styled(format!("{:>14}", fmt_num(r.input)), style),
+            Span::styled(format!("{:>14}", fmt_num(r.output)), style),
+            Span::styled(format!("{:>14}", fmt_num(r.cache_read)), style),
+            Span::styled(format!("{:>14}", fmt_num(r.total)), style),
+            Span::styled(format!("{:>12}", format!("${:.4}", r.cost)), style),
+            Span::styled(suffix.to_string(), Style::default().fg(Color::DarkGray)),
         ]));
     }
     let body = Paragraph::new(lines);
