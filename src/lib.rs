@@ -4,6 +4,7 @@
 pub mod aggregate;
 pub mod config;
 pub mod model;
+pub mod pricing;
 pub mod providers;
 pub mod tokens;
 pub mod ui;

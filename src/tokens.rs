@@ -120,7 +120,12 @@ pub struct TokenRow {
     pub output: i64,
     pub cache_read: i64,
     pub total: i64,
+    /// Provider-reported cost from pi session history.
     pub cost: f64,
+    /// Estimated cost computed from public PAYG pricing.
+    /// Useful when the user is on a flat-fee plan and provider-reported
+    /// cost is $0.
+    pub est_cost: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -152,6 +157,7 @@ impl TokenSummary {
                     cache_read: 0,
                     total: 0,
                     cost: 0.0,
+                    est_cost: None,
                 });
             }
         }
@@ -243,6 +249,7 @@ fn walk(dir: &std::path::Path, since: Option<i64>, out: &mut BTreeMap<String, To
                 cache_read: 0,
                 total: 0,
                 cost: 0.0,
+                est_cost: None,
             });
             row.msgs += 1;
             row.input += usage.input;
@@ -250,6 +257,7 @@ fn walk(dir: &std::path::Path, since: Option<i64>, out: &mut BTreeMap<String, To
             row.cache_read += usage.cache_read;
             row.total += usage.total;
             row.cost += cost;
+            row.est_cost = crate::pricing::estimated_cost(model, row.input, row.cache_read, row.output);
         }
     }
     Ok(())

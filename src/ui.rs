@@ -100,7 +100,8 @@ fn render_tokens(frame: &mut Frame, area: Rect, summary: &TokenSummary, scroll: 
         Span::styled(format!("{:>14}", "output"), Style::default().add_modifier(Modifier::BOLD)),
         Span::styled(format!("{:>14}", "cached"), Style::default().add_modifier(Modifier::BOLD)),
         Span::styled(format!("{:>14}", "total"), Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(format!("{:>12}", "cost"), Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(format!("{:>10}", "actual"), Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(format!("{:>10}", "est $"), Style::default().add_modifier(Modifier::BOLD)),
     ]);
     let mut lines: Vec<Line> = vec![header];
 
@@ -129,7 +130,17 @@ fn render_tokens(frame: &mut Frame, area: Rect, summary: &TokenSummary, scroll: 
             Span::styled(format!("{:>14}", fmt_num(r.output)), style),
             Span::styled(format!("{:>14}", fmt_num(r.cache_read)), style),
             Span::styled(format!("{:>14}", fmt_num(r.total)), style),
-            Span::styled(format!("{:>12}", format!("${:.4}", r.cost)), style),
+            Span::styled(format!("{:>10}", format!("${:.2}", r.cost)), style),
+            Span::styled(
+                r.est_cost
+                    .map(|c| format!("${:.2}", c))
+                    .unwrap_or_else(|| "-".to_string()),
+                if r.cost == 0.0 && r.est_cost.unwrap_or(0.0) > 0.0 {
+                    Style::default().fg(Color::Magenta)  // highlight the saved value
+                } else {
+                    style
+                },
+            ),
             Span::styled(suffix.to_string(), Style::default().fg(Color::DarkGray)),
         ]));
     }

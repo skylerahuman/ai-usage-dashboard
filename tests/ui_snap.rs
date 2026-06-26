@@ -77,6 +77,7 @@ fn renders_with_token_panel() {
             cache_read: 19_550_942,
             total: 19_800_414,
             cost: 2.66,
+            est_cost: Some(2.30),
         }],
     };
     let state = Aggregated {
