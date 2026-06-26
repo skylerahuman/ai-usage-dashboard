@@ -26,14 +26,20 @@ async fn main() -> Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    // Allow disabling alternate screen for testing/automation.
+    let use_alt = std::env::var("AI_USAGE_DASHBOARD_NO_ALT_SCREEN").ok().as_deref() != Some("1");
+    if use_alt {
+        execute!(stdout, EnterAlternateScreen)?;
+    }
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let res = run_app(&mut terminal, creds, client, token_window).await;
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    if use_alt {
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    }
     terminal.show_cursor()?;
 
     if let Err(err) = res {
@@ -93,10 +99,11 @@ async fn run_app(
     let mut tick = tokio::time::interval(Duration::from_millis(250));
 
     loop {
-        // Compute max scroll based on terminal height and panel sizing.
-        let (term_rows, _) = terminal.size().map(|r| (r.height, r.width)).unwrap_or((24, 80));
-        let tokens_panel_inner = term_rows.saturating_sub(3 /*header*/ + 2 /*footer*/ + 2 /*borders*/).saturating_sub(1 /*tokens header row*/) as usize;
-        let visible_rows = tokens_panel_inner;
+        // The tokens panel is fixed at 8 outer rows = 6 inner rows (after top/bottom borders).
+        // Reserve 1 of those for the column header, leaving 5 model rows visible.
+        const TOKENS_INNER_ROWS: usize = 6;
+        const TOKENS_HEADER_ROW: usize = 1;
+        let visible_rows = TOKENS_INNER_ROWS.saturating_sub(TOKENS_HEADER_ROW);
         let max_scroll = summary.rows.len().saturating_sub(visible_rows);
         if token_scroll > max_scroll {
             token_scroll = max_scroll;

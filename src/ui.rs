@@ -69,18 +69,23 @@ fn render_header(frame: &mut Frame, area: Rect, state: &Aggregated) {
 }
 
 fn render_tokens(frame: &mut Frame, area: Rect, summary: &TokenSummary, scroll: usize) {
+    // Compute inner area first so the title can show the current scroll position.
+    let temp_block = Block::default().borders(Borders::ALL);
+    let inner = temp_block.inner(area);
+    let visible = inner.height.saturating_sub(1) as usize;
+    let end_visible = (scroll + visible).min(summary.rows.len());
+
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Line::from(vec![
             Span::styled(" tokens ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
             Span::styled(format!(" {} ", summary.window.label()), Style::default().fg(Color::DarkGray)),
             if summary.rows.len() > 1 {
-                Span::styled(format!("  [{}–{} of {}]", scroll + 1, summary.rows.len().min(scroll + area.height.saturating_sub(2) as usize), summary.rows.len()), Style::default().fg(Color::DarkGray))
+                Span::styled(format!("  [{}–{} of {}]", scroll + 1, end_visible, summary.rows.len()), Style::default().fg(Color::DarkGray))
             } else {
                 Span::raw("")
             },
         ]));
-    let inner = block.inner(area);
     frame.render_widget(block, area);
 
     if summary.rows.is_empty() {
