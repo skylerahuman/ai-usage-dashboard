@@ -40,16 +40,16 @@ impl TokenWindow {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct Entry {
+/// A session message, regardless of schema version.
+#[derive(Debug, Default)]
+struct Parsed {
     role: Option<String>,
     model: Option<String>,
-    timestamp: Option<i64>,
+    ts_ms: Option<i64>,
     usage: Option<Usage>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
 struct Usage {
     input: i64,
@@ -63,24 +63,52 @@ struct Usage {
     cost: Option<Cost>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
 struct Cost {
     total: f64,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(default)]
-struct Record {
-    v: Option<i64>,
-    t: Option<i64>,
-    entry: Entry,
+/// Try to parse a JSONL line as either schema. Returns None if neither matches.
+fn parse_line(ln: &str) -> Option<Parsed> {
+    let v: serde_json::Value = serde_json::from_str(ln).ok()?;
+
+    // v3 schema: `{ type: "message", message: { role, model, usage, ... } }`
+    if let Some(kind) = v.get("type").and_then(|x| x.as_str()) {
+        if kind == "message" {
+            let msg = v.get("message")?;
+            return Some(Parsed {
+                role: msg.get("role").and_then(|x| x.as_str()).map(String::from),
+                model: msg.get("model").and_then(|x| x.as_str()).map(String::from),
+                ts_ms: parse_timestamp(v.get("timestamp")),
+                usage: serde_json::from_value(msg.get("usage").cloned().unwrap_or_default()).ok(),
+            });
+        }
+        // Other v3 event types (session, model_change, thinking_level_change) — ignore.
+        return None;
+    }
+
+    // v1 schema: `{ v, t, entry: { role, model, usage, ... } }`
+    if v.get("entry").is_some() {
+        let entry = v.get("entry")?;
+        return Some(Parsed {
+            role: entry.get("role").and_then(|x| x.as_str()).map(String::from),
+            model: entry.get("model").and_then(|x| x.as_str()).map(String::from),
+            ts_ms: v.get("t").and_then(|x| x.as_i64()),
+            usage: serde_json::from_value(entry.get("usage").cloned().unwrap_or_default()).ok(),
+        });
+    }
+
+    None
 }
 
-impl Default for Record {
-    fn default() -> Self {
-        Record { v: None, t: None, entry: Entry::default() }
+fn parse_timestamp(v: Option<&serde_json::Value>) -> Option<i64> {
+    let s = v?.as_str()?;
+    // pi emits either "2026-05-19T01:42:13.716Z" (ISO) or ms epoch int.
+    if let Ok(n) = s.parse::<i64>() {
+        return Some(n);
     }
+    chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
 }
 
 #[derive(Debug, Clone)]
@@ -195,18 +223,16 @@ fn walk(dir: &std::path::Path, since: Option<i64>, out: &mut BTreeMap<String, To
         }
         let Ok(s) = std::fs::read_to_string(&path) else { continue; };
         for ln in s.lines() {
-            let Ok(rec) = serde_json::from_str::<Record>(ln) else { continue; };
-            let entry = rec.entry;
-            if entry.role.as_deref() != Some("assistant") {
+            let Some(parsed) = parse_line(ln) else { continue; };
+            if parsed.role.as_deref() != Some("assistant") {
                 continue;
             }
-            let ts = rec.t.or(entry.timestamp);
-            if let (Some(since_ms), Some(ts)) = (since, ts) {
+            if let (Some(since_ms), Some(ts)) = (since, parsed.ts_ms) {
                 if ts < since_ms {
                     continue;
                 }
             }
-            let (Some(model), Some(usage)) = (entry.model.as_ref(), entry.usage.as_ref()) else { continue; };
+            let (Some(model), Some(usage)) = (parsed.model.as_ref(), parsed.usage.as_ref()) else { continue; };
             let cost = usage.cost.as_ref().map(|c| c.total).unwrap_or(0.0);
             let row = out.entry(model.clone()).or_insert_with(|| TokenRow {
                 model: model.clone(),

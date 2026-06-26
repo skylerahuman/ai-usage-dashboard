@@ -3,7 +3,7 @@ use crate::tokens::{TokenSummary, TokenWindow};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, LineGauge, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 use std::time::Instant;
 
@@ -14,7 +14,13 @@ pub fn render(frame: &mut Frame, state: &Aggregated, tokens: Option<&TokenSummar
         constraints.push(Constraint::Length(8));
     }
     for p in &state.providers {
-        let height = if p.status.is_error() { 3 } else { 6 };
+        let height = if p.status.is_error() {
+            3
+        } else {
+            // 2 rows per window (bar + meta) + 1 row for notes + 2 rows for borders.
+            let n = p.windows.len().max(1) as u16;
+            (n * 2 + 1 + 2).min(10)
+        };
         constraints.push(Constraint::Length(height));
     }
     if state.providers.is_empty() {
@@ -154,7 +160,7 @@ fn render_provider(frame: &mut Frame, area: Rect, p: &ProviderUsage) {
             Span::styled(format!(" {}  ", p.provider.source()), Style::default().fg(Color::DarkGray)),
             Span::styled(message, Style::default().fg(Color::Red)),
         ]);
-        let block = Block::default().borders(Borders::ALL).border_style(border).title_bottom(Line::from(""));
+        let block = Block::default().borders(Borders::ALL).border_style(border);
         let para = Paragraph::new(line);
         frame.render_widget(para.block(block), area);
         return;
@@ -170,83 +176,71 @@ fn render_provider(frame: &mut Frame, area: Rect, p: &ProviderUsage) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // Two rows per window: the bar line (LineGauge), then a meta line (counts + reset).
     let mut windows = p.windows.clone();
     windows.sort_by_key(|w| match w.key { WindowKey::FiveHour => 0, WindowKey::Weekly => 1, WindowKey::Additional(_) => 2 });
-    let has_5h = windows.iter().any(|w| matches!(w.key, WindowKey::FiveHour));
-    let has_weekly = windows.iter().any(|w| matches!(w.key, WindowKey::Weekly));
-    let extras: Vec<_> = windows.iter().filter(|w| matches!(w.key, WindowKey::Additional(_))).collect();
 
-    let mut row_constraints: Vec<Constraint> = Vec::new();
-    if has_5h { row_constraints.push(Constraint::Length(2)); }
-    if has_weekly { row_constraints.push(Constraint::Length(2)); }
-    for _ in 0..extras.len().min(2) {
-        row_constraints.push(Constraint::Length(1));
-    }
-    row_constraints.push(Constraint::Min(1));
-    if row_constraints.is_empty() {
+    if windows.is_empty() {
         frame.render_widget(Paragraph::new("(no usage windows reported)"), inner);
         return;
     }
 
-    let rows = Layout::default().direction(Direction::Vertical).constraints(row_constraints).split(inner);
+    let n = windows.len() as u16;
+    let mut constraints: Vec<Constraint> = Vec::new();
+    for _ in 0..n {
+        constraints.push(Constraint::Length(1)); // bar
+        constraints.push(Constraint::Length(1)); // meta line
+    }
+    constraints.push(Constraint::Min(0)); // notes
+    let rows = Layout::default().direction(Direction::Vertical).constraints(constraints).split(inner);
 
-    let mut row_i = 0;
-    for w in &windows {
-        if row_i >= rows.len() { break; }
-        match w.key {
-            WindowKey::FiveHour => { render_window_row(frame, rows[row_i], w); row_i += 1; }
-            WindowKey::Weekly => { render_window_row(frame, rows[row_i], w); row_i += 1; }
-            WindowKey::Additional(_) => {
-                render_extra_row(frame, rows[row_i], w); row_i += 1;
-            }
-        }
+    for (i, w) in windows.iter().enumerate() {
+        let bar_row = rows.get((i as u16 * 2) as usize).copied();
+        let meta_row = rows.get((i as u16 * 2 + 1) as usize).copied();
+        if let Some(r) = bar_row { render_line_gauge(frame, r, w); }
+        if let Some(r) = meta_row { render_window_meta(frame, r, w); }
     }
 
-    let mut notes: Vec<ListItem> = p.notes.iter().take(3).map(|n| ListItem::new(n.clone())).collect();
-    if notes.is_empty() {
-        // Healthy provider: don't show the “no token/credit counts” fallback.
-        // Only show that text when something is actually missing on an otherwise-empty row.
-    }
-    if row_i < rows.len() {
-        frame.render_widget(List::new(notes), rows[row_i]);
+    let notes: Vec<ListItem> = p.notes.iter().take(2).map(|n| ListItem::new(n.clone())).collect();
+    let notes_area = rows.get((n * 2) as usize).copied().unwrap_or(inner);
+    if !notes.is_empty() && notes_area.height > 0 {
+        frame.render_widget(List::new(notes), notes_area);
     }
 }
 
-fn render_window_row(frame: &mut Frame, area: Rect, w: &UsageWindow) {
+fn render_line_gauge(frame: &mut Frame, area: Rect, w: &UsageWindow) {
     let pct = w.used_percent.unwrap_or(0.0).clamp(0.0, 100.0);
     let color = if pct >= 90.0 { Color::Red } else if pct >= 70.0 { Color::Yellow } else { Color::Green };
-    let row = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(area);
-
-    // Top: label + percentage (left), reset countdown (right)
-    let left = Line::from(vec![
-        Span::styled(format!(" {} ", w.label), Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(format!("{:>5.1}%", pct), Style::default().fg(color).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(format!("{}", raw_counts(w)), Style::default().fg(Color::DarkGray)),
-    ]);
-    let right = Line::from(Span::styled(reset_text(w), Style::default().fg(Color::DarkGray)));
-    let title_line = line_with_right_span(area.width, left, right);
-    frame.render_widget(Paragraph::new(title_line), row[0]);
-
-    // Bottom: a manual bar using block chars, so it always fits the width
-    let bar_width = area.width as usize;
-    let filled = ((pct / 100.0) * bar_width as f64).round() as usize;
-    let empty = bar_width.saturating_sub(filled);
-    let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
-    let bar_line = Line::from(Span::styled(bar, Style::default().fg(color)));
-    frame.render_widget(Paragraph::new(bar_line), row[1]);
+    // Label is short: just the percentage. The bar fills the rest of the line.
+    // LineGauge centers the label at the position determined by `ratio`, so
+    // for a 45% bar, the label appears at ~45% across the line.
+    let label = format!("{}  {:>5.1}%  ", w.label, pct);
+    let gauge = LineGauge::default()
+        .ratio((pct / 100.0).clamp(0.0, 1.0))
+        .filled_style(Style::default().fg(Color::Black).bg(color))
+        .unfilled_style(Style::default().fg(Color::Black).bg(Color::DarkGray))
+        .line_set(ratatui::symbols::line::THICK)
+        .label(label);
+    frame.render_widget(gauge, area);
 }
 
-fn render_extra_row(frame: &mut Frame, area: Rect, w: &UsageWindow) {
-    let pct = w.used_percent.unwrap_or(0.0).clamp(0.0, 100.0);
-    let color = if pct >= 90.0 { Color::Red } else if pct >= 70.0 { Color::Yellow } else { Color::Blue };
+fn render_window_meta(frame: &mut Frame, area: Rect, w: &UsageWindow) {
+    // Right side: counts + reset time, dim.
     let line = Line::from(vec![
-        Span::styled(format!(" {} ", w.label), Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(format!("{:>5.1}%", pct), Style::default().fg(color)),
+        Span::styled(raw_counts(w), Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
         Span::styled(reset_text(w), Style::default().fg(Color::DarkGray)),
     ]);
     frame.render_widget(Paragraph::new(line), area);
+}
+
+fn render_window_row(frame: &mut Frame, area: Rect, w: &UsageWindow) {
+    // Kept for backwards compatibility with tests that imported it; just delegates.
+    render_line_gauge(frame, area, w);
+}
+
+fn render_extra_row(frame: &mut Frame, area: Rect, w: &UsageWindow) {
+    render_line_gauge(frame, area, w);
 }
 
 fn line_with_right_span<'a>(width: u16, left: Line<'a>, right: Line<'a>) -> Line<'a> {
