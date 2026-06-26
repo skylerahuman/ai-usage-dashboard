@@ -131,7 +131,7 @@ fn render_tokens(frame: &mut Frame, area: Rect, summary: &TokenSummary, scroll: 
             Span::styled(format!("{:>14}", fmt_num(r.total)), style),
             Span::styled(
                 r.est_cost
-                    .map(|c| format!("${:>12.2}", c))
+                    .map(|c| format!("{:>14}", format!("${:.2}", c)))
                     .unwrap_or_else(|| format!("{:>14}", "-")),
                 style,
             ),
