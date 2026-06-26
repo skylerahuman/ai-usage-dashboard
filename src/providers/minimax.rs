@@ -138,10 +138,20 @@ pub async fn fetch(cred: &Credential, client: &reqwest::Client) -> anyhow::Resul
         }
         if let Some(r) = m.remains_time {
             // API returns milliseconds; convert to seconds.
-            max_5h_remains = Some(max_5h_remains.map_or(r / 1000, |cur| cur.max(r / 1000)));
+            // Use min across models: that's "when can I use the API again".
+            // Different model buckets can have different cycle phases; max
+            // would surface the model whose cycle just started (irrelevant
+            // to whether the bucket the user actually uses has refilled).
+            max_5h_remains = Some(match max_5h_remains {
+                None => r / 1000,
+                Some(cur) => (r / 1000).min(cur),
+            });
         }
         if let Some(r) = m.weekly_remains_time {
-            max_week_remains = Some(max_week_remains.map_or(r / 1000, |cur| cur.max(r / 1000)));
+            max_week_remains = Some(match max_week_remains {
+                None => r / 1000,
+                Some(cur) => (r / 1000).min(cur),
+            });
         }
     }
 
