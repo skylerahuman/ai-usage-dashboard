@@ -96,42 +96,53 @@ pub async fn fetch(cred: &Credential, client: &reqwest::Client) -> Result<Provid
         });
     }
 
+    // z.ai returns TOKENS_LIMIT entries with (unit, number) combos that vary
+    // by plan (e.g. unit=3/num=5 for 5h, unit=6/num=7 for weekly on one plan;
+    // unit=6/num=1 for weekly on another). Rather than hard-coding the combos,
+    // we collect all token-limit entries and label them by position:
+    //   first entry  -> 5h
+    //   second entry -> Weekly
+    //   any others   -> Additional("tokens")
+    // z.ai doesn't always return entries in a stable order, so we sort by
+    // window length (estimated from nextResetTime) so the shorter window
+    // is always 5h and the longer is weekly.
+    let (mut token_limits, time_limits): (Vec<_>, Vec<_>) = body
+        .data
+        .limits
+        .into_iter()
+        .partition(|l| l.kind == "TOKENS_LIMIT");
+    token_limits.sort_by_key(|l| {
+        l.nextResetTime
+            .map(|ms| ms / 1000 - chrono::Utc::now().timestamp())
+            .unwrap_or(i64::MAX)
+    });
+
     let mut windows = Vec::new();
+    for (idx, lim) in token_limits.iter().enumerate() {
+        let (key, secs) = match idx {
+            0 => (WindowKey::FiveHour, Some(5 * 3600)),
+            1 => (WindowKey::Weekly, Some(7 * 24 * 3600)),
+            _ => (WindowKey::Additional("tokens".to_string()), None),
+        };
+        windows.push(UsageWindow {
+            label: key.label(),
+            key,
+            used_percent: lim.percentage,
+            reset_at: lim.nextResetTime.map(|ms| ms / 1000),
+            window_seconds: secs,
+            used_raw: lim.currentValue,
+            total_raw: lim.usage,
+            raw: serde_json::to_value(&lim).unwrap_or(serde_json::Value::Null),
+        });
+    }
     let mut notes = Vec::new();
-    for lim in body.data.limits {
-        match lim.kind.as_str() {
-            "TOKENS_LIMIT" => {
-                let key = match (lim.unit, lim.number) {
-                    (Some(3), Some(5)) => WindowKey::FiveHour,
-                    (Some(6), Some(7)) => WindowKey::Weekly,
-                    _ => WindowKey::Additional("tokens".to_string()),
-                };
-                let secs = match (lim.unit, lim.number) {
-                    (Some(3), Some(5)) => Some(5 * 3600),
-                    (Some(6), Some(7)) => Some(7 * 24 * 3600),
-                    _ => None,
-                };
-                windows.push(UsageWindow {
-                    label: key.label(),
-                    key,
-                    used_percent: lim.percentage,
-                    reset_at: lim.nextResetTime.map(|ms| ms / 1000),
-                    window_seconds: secs,
-                    used_raw: lim.currentValue,
-                    total_raw: lim.usage,
-                    raw: serde_json::to_value(&lim).unwrap_or(serde_json::Value::Null),
-                });
-            }
-            "TIME_LIMIT" => {
-                if let Some(details) = lim.usageDetails {
-                    for d in details {
-                        if let (Some(mc), Some(u)) = (d.modelCode, d.usage) {
-                            notes.push(format!("{}: {} calls", mc, u));
-                        }
-                    }
+    for lim in time_limits.iter() {
+        if let Some(details) = &lim.usageDetails {
+            for d in details {
+                if let (Some(mc), Some(u)) = (d.modelCode.clone(), d.usage) {
+                    notes.push(format!("{}: {} calls", mc, u));
                 }
             }
-            _ => {}
         }
     }
 
