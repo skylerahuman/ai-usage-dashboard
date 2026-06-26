@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+.env
+.env.local
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/
+
+# _plans scratchpads — not part of the public repo
+_plans/

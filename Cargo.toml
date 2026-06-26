@@ -1,0 +1,44 @@
+[package]
+name = "ai-usage-dashboard"
+version = "0.1.0"
+edition = "2021"
+description = "Unified terminal dashboard for AI provider usage (z.ai, minimax, OpenAI Codex)"
+license = "MIT"
+repository = "https://github.com/skylerahuman/ai-usage-dashboard"
+readme = "README.md"
+keywords = ["ratatui", "tui", "ai", "usage", "dashboard"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "ai-usage-dashboard"
+path = "src/main.rs"
+
+[dependencies]
+# TUI
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+crossterm = { version = "0.28", default-features = false, features = ["events", "use-dev-tty"] }
+
+# Async + HTTP
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Errors
+anyhow = "1"
+thiserror = "1"
+
+# Time
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+
+# Misc
+humantime = "2"
+dirs = "5"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
