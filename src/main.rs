@@ -89,10 +89,20 @@ async fn run_app(
 
     let mut state = aggregate::refresh(&creds, &client).await;
     let mut summary = ai_usage_dashboard::tokens::TokenSummary::collect(token_window);
+    let mut token_scroll: usize = 0;
     let mut tick = tokio::time::interval(Duration::from_millis(250));
 
     loop {
-        terminal.draw(|f| ui::render(f, &state, Some(&summary)))?;
+        // Compute max scroll based on terminal height and panel sizing.
+        let (term_rows, _) = terminal.size().map(|r| (r.height, r.width)).unwrap_or((24, 80));
+        let tokens_panel_inner = term_rows.saturating_sub(3 /*header*/ + 2 /*footer*/ + 2 /*borders*/).saturating_sub(1 /*tokens header row*/) as usize;
+        let visible_rows = tokens_panel_inner;
+        let max_scroll = summary.rows.len().saturating_sub(visible_rows);
+        if token_scroll > max_scroll {
+            token_scroll = max_scroll;
+        }
+
+        terminal.draw(|f| ui::render(f, &state, Some(&summary), token_scroll))?;
 
         tokio::select! {
             maybe_key = rx.recv() => {
@@ -102,6 +112,27 @@ async fn run_app(
                     KeyCode::Char('r') | KeyCode::Char('R') => {
                         state = aggregate::refresh(&creds, &client).await;
                         summary = ai_usage_dashboard::tokens::TokenSummary::collect(token_window);
+                        token_scroll = 0;
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        if token_scroll < max_scroll {
+                            token_scroll += 1;
+                        }
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        token_scroll = token_scroll.saturating_sub(1);
+                    }
+                    KeyCode::PageDown => {
+                        token_scroll = (token_scroll + visible_rows).min(max_scroll);
+                    }
+                    KeyCode::PageUp => {
+                        token_scroll = token_scroll.saturating_sub(visible_rows);
+                    }
+                    KeyCode::Char('g') => {
+                        token_scroll = 0;
+                    }
+                    KeyCode::Char('G') => {
+                        token_scroll = max_scroll;
                     }
                     _ => {}
                 }
@@ -110,6 +141,7 @@ async fn run_app(
                 if state.next_refresh.map(|i| i <= std::time::Instant::now()).unwrap_or(false) {
                     state = aggregate::refresh(&creds, &client).await;
                     summary = ai_usage_dashboard::tokens::TokenSummary::collect(token_window);
+                    token_scroll = 0;
                 }
             }
             _ = tokio::signal::ctrl_c() => break,

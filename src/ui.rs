@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, LineGauge, List, ListItem, Paragraph, Wra
 use ratatui::Frame;
 use std::time::Instant;
 
-pub fn render(frame: &mut Frame, state: &Aggregated, tokens: Option<&TokenSummary>) {
+pub fn render(frame: &mut Frame, state: &Aggregated, tokens: Option<&TokenSummary>, token_scroll: usize) {
     let has_tokens = tokens.is_some();
     let mut constraints = vec![Constraint::Length(3)];
     if has_tokens {
@@ -37,7 +37,7 @@ pub fn render(frame: &mut Frame, state: &Aggregated, tokens: Option<&TokenSummar
     render_header(frame, root[idx], state);
     idx += 1;
     if let Some(t) = tokens {
-        render_tokens(frame, root[idx], t);
+        render_tokens(frame, root[idx], t, token_scroll);
         idx += 1;
     }
     render_providers(frame, &root[idx..], state);
@@ -68,12 +68,17 @@ fn render_header(frame: &mut Frame, area: Rect, state: &Aggregated) {
     frame.render_widget(Paragraph::new(title).block(Block::default().borders(Borders::ALL)), area);
 }
 
-fn render_tokens(frame: &mut Frame, area: Rect, summary: &TokenSummary) {
+fn render_tokens(frame: &mut Frame, area: Rect, summary: &TokenSummary, scroll: usize) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Line::from(vec![
             Span::styled(" tokens ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
             Span::styled(format!(" {} ", summary.window.label()), Style::default().fg(Color::DarkGray)),
+            if summary.rows.len() > 1 {
+                Span::styled(format!("  [{}–{} of {}]", scroll + 1, summary.rows.len().min(scroll + area.height.saturating_sub(2) as usize), summary.rows.len()), Style::default().fg(Color::DarkGray))
+            } else {
+                Span::raw("")
+            },
         ]));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -93,7 +98,13 @@ fn render_tokens(frame: &mut Frame, area: Rect, summary: &TokenSummary) {
         Span::styled(format!("{:>12}", "cost"), Style::default().add_modifier(Modifier::BOLD)),
     ]);
     let mut lines: Vec<Line> = vec![header];
-    for r in &summary.rows {
+
+    // Visible window: reserve 1 row for the header.
+    let visible = inner.height.saturating_sub(1) as usize;
+    let end = (scroll + visible).min(summary.rows.len());
+    let start = scroll.min(end);
+
+    for r in &summary.rows[start..end] {
         let provider_color = match r.provider {
             Provider::Zai => Color::Cyan,
             Provider::Minimax => Color::Green,
@@ -234,34 +245,11 @@ fn render_window_meta(frame: &mut Frame, area: Rect, w: &UsageWindow) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-fn render_window_row(frame: &mut Frame, area: Rect, w: &UsageWindow) {
-    // Kept for backwards compatibility with tests that imported it; just delegates.
-    render_line_gauge(frame, area, w);
-}
-
-fn render_extra_row(frame: &mut Frame, area: Rect, w: &UsageWindow) {
-    render_line_gauge(frame, area, w);
-}
-
-fn line_with_right_span<'a>(width: u16, left: Line<'a>, right: Line<'a>) -> Line<'a> {
-    let left_len: usize = left.spans.iter().map(|s| s.content.chars().count()).sum();
-    let right_len: usize = right.spans.iter().map(|s| s.content.chars().count()).sum();
-    let total = width as usize;
-    if total <= left_len + right_len + 1 {
-        return left;
-    }
-    let gap = total - left_len - right_len;
-    let mut spans: Vec<Span<'_>> = left.spans.to_vec();
-    spans.push(Span::raw(" ".repeat(gap)));
-    spans.extend(right.spans.iter().cloned());
-    Line::from(spans)
-}
-
 fn raw_counts(w: &UsageWindow) -> String {
     // Hide counts when both are 0 or missing — just noise.
     match (w.used_raw, w.total_raw) {
         (Some(u), Some(t)) if t > 0 && u > 0 => format!("{}/{}", fmt_num(u), fmt_num(t)),
-        (Some(u), Some(t)) if t > 0 => format!("0/{}", fmt_num(t)),
+        (Some(_), Some(t)) if t > 0 => format!("0/{}", fmt_num(t)),
         (Some(u), _) if u > 0 => fmt_num(u),
         _ => "".into(),
     }
@@ -275,7 +263,7 @@ fn reset_text(w: &UsageWindow) -> String {
 
 fn render_footer(frame: &mut Frame, area: Rect, state: &Aggregated) {
     let auth = state.auth_source.as_deref().unwrap_or("env only / no auth.json");
-    let line = format!("[r] refresh  [q] quit  ·  auth: {}  ·  --since <dur> for token window", auth);
+    let line = format!("[r] refresh  [j/k] scroll  [q] quit  ·  auth: {}  ·  --since <dur> for token window", auth);
     frame.render_widget(Paragraph::new(line).wrap(Wrap { trim: true }), area);
 }
 

@@ -59,7 +59,7 @@ fn renders_with_partial_failure() {
     let backend = TestBackend::new(120, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
-        .draw(|f| ai_usage_dashboard::ui::render(f, &state, None))
+        .draw(|f| ai_usage_dashboard::ui::render(f, &state, None, 0))
         .expect("render should not panic");
 }
 
@@ -88,6 +88,6 @@ fn renders_with_token_panel() {
     let backend = TestBackend::new(140, 28);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
-        .draw(|f| ai_usage_dashboard::ui::render(f, &state, Some(&summary)))
+        .draw(|f| ai_usage_dashboard::ui::render(f, &state, Some(&summary), 0))
         .expect("render should not panic with tokens panel");
 }
